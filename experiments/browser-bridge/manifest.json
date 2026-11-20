@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "DSH Eggs 本地连接实验",
+  "version": "0.0.1",
+  "description": "测试本地连接及用户主动授权的 Epic 页面状态；不读取账号或 Cookie。",
+  "permissions": ["nativeMessaging", "activeTab", "scripting"],
+  "background": { "service_worker": "worker.js" },
+  "action": { "default_popup": "popup.html" }
+}

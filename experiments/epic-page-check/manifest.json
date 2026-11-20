@@ -1,0 +1,8 @@
+{
+  "manifest_version": 3,
+  "name": "DSH Eggs Epic 页面状态实验",
+  "version": "0.0.1",
+  "description": "用户主动点击时检查当前 Epic 页面的登录标记及按钮状态，不读取 Cookie 或账号详情。",
+  "permissions": ["activeTab", "scripting"],
+  "action": { "default_popup": "popup.html" }
+}

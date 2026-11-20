@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.p0-data/
+.env
+.env.*
+*.enc

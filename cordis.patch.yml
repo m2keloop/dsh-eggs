@@ -1,0 +1,21 @@
+- insert:
+    - id: eggs-host
+      name: dsh-eggs-p0
+    - id: eggs-tools
+      name: dsh-eggs-p0/tools
+    - id: eggs-panel
+      name: dsh-eggs-p0/remote-host
+    - id: eggs-runner-preset
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: eggs-runner
+        name: Eggs runner
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: Run only the requested egg_run tool and report its status.
+              complete: true
+              includeRuntimeContext: false
+          - id: eggs-runner-scope
+            name: dsh-eggs-p0/runner-scope
