@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { randomBytes } from 'node:crypto'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { LocalStore } from '../src/local/store.js'
@@ -83,5 +83,29 @@ test('deleting one local configuration removes its session without affecting oth
     await assert.rejects(store.getCredential('claim_1'), { code: 'ENOENT' })
     assert.deepEqual(await store.getCredential('claim_2'), { token: 'synthetic-claim_2' })
     await assert.rejects(store.deleteClaim('../escape'))
+  } finally { if (store) await store.close(); await rm(root, { recursive: true, force: true }) }
+})
+
+test('stores bounded, sanitized execution history and migrates an existing latest run', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-eggs-history-'))
+  let store
+  try {
+    store = await LocalStore.open(root, keyProvider())
+    await store.createClaim({ id: 'claim_1', benefitId: 'epic-free-games', label: 'Test' })
+    const legacy = { version: 1, status: 'unknown', count: 0, finishedAt: '2026-01-01T00:00:00.000Z' }
+    await writeFile(join(root, 'claims', 'claim_1', 'last-run.json'), JSON.stringify(legacy))
+    assert.deepEqual(await store.getRunHistory('claim_1'), [{ status: legacy.status, count: 0, finishedAt: legacy.finishedAt }])
+    await store.saveRun('claim_1', { status: 'success', count: 1, token: 'synthetic-secret' })
+    const first = await store.getRunHistory('claim_1')
+    assert.equal(first.length, 2)
+    assert.equal(JSON.stringify(first).includes('synthetic-secret'), false)
+    assert.equal((await readFile(join(root, 'claims', 'claim_1', 'run-history.json'), 'utf8')).includes('synthetic-secret'), false)
+    for (let i = 0; i < 52; i++) await store.saveRun('claim_1', { status: 'no_offers', count: 0 })
+    assert.equal((await store.getRunHistory('claim_1')).length, 50)
+    await store.close(); store = undefined
+    store = await LocalStore.open(root, keyProvider())
+    assert.equal((await store.getRunHistory('claim_1')).length, 50)
+    await store.deleteClaim('claim_1')
+    await assert.rejects(store.getRunHistory('claim_1'), { code: 'ENOENT' })
   } finally { if (store) await store.close(); await rm(root, { recursive: true, force: true }) }
 })

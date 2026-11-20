@@ -6,10 +6,12 @@ import { acquireWriterLease } from './writer-lease.js'
 import { open as decrypt, seal, readEnvelope, writeEnvelope } from './vault.js'
 
 const ID = /^[a-zA-Z0-9_-]{1,80}$/
-const RUN_STATUS = new Set(['success', 'unknown', 'user_action_required', 'no_offers', 'auth_required', 'access_blocked', 'key_unavailable', 'failed'])
+const RUN_STATUS = new Set(['success', 'unknown', 'user_action_required', 'no_offers', 'auth_required', 'access_blocked', 'key_unavailable', 'settings_required', 'failed'])
+const validRun = record => record && Object.keys(record).sort().join(',') === 'count,finishedAt,status,version' && record.version === 1 && RUN_STATUS.has(record.status) && Number.isSafeInteger(record.count) && record.count >= 0 && typeof record.finishedAt === 'string' && Number.isFinite(Date.parse(record.finishedAt))
 const unavailable = () => Object.assign(new Error('Credential key unavailable'), { code: 'KEY_UNAVAILABLE' })
 const validId = id => { if (typeof id !== 'string' || !ID.test(id)) throw new Error('Invalid identifier'); return id }
 const missing = error => { if (error.code === 'ENOENT') return null; throw error }
+const validSettings = settings => settings && typeof settings === 'object' && !Array.isArray(settings) && Object.keys(settings).length <= 8 && Object.entries(settings).every(([key, value]) => /^[a-z][a-z0-9_]{0,31}$/.test(key) && typeof value === 'string' && /^[A-Za-z0-9_-]{1,50}$/.test(value))
 
 async function ensureDirectory(path) {
   await mkdir(path, { recursive: true, mode: 0o700 })
@@ -76,9 +78,10 @@ export class LocalStore {
 
   async createClaim(config) {
     return this.serial(async () => {
-      if (!config || Object.keys(config).sort().join(',') !== 'benefitId,id,label') throw new Error('Invalid configuration')
+      if (!config || !['benefitId,id,label', 'benefitId,id,label,settings'].includes(Object.keys(config).sort().join(','))) throw new Error('Invalid configuration')
       validId(config.id); validId(config.benefitId)
       if (typeof config.label !== 'string' || config.label.length > 100) throw new Error('Invalid configuration')
+      if (config.settings !== undefined && !validSettings(config.settings)) throw new Error('Invalid settings')
       const path = this.claimPath(config.id)
       await mkdir(path, { mode: 0o700 })
       await writeJson(join(path, 'config.json'), { version: 1, ...config })
@@ -96,6 +99,18 @@ export class LocalStore {
     })
   }
 
+  async updateSettings(id, settings) {
+    return this.serial(async () => {
+      if (!validSettings(settings)) throw new Error('Invalid settings')
+      const path = this.claimPath(id)
+      const info = await lstat(path)
+      if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('Invalid claim directory')
+      const config = await readJson(join(path, 'config.json'))
+      if (config.version !== 1 || config.id !== id || !ID.test(config.benefitId) || typeof config.label !== 'string') throw new Error('Invalid configuration')
+      await writeJson(join(path, 'config.json'), { version: 1, id, benefitId: config.benefitId, label: config.label, settings })
+    })
+  }
+
   async listClaims() {
     const entries = await readdir(join(this.root, 'claims'), { withFileTypes: true })
     const result = []
@@ -105,7 +120,7 @@ export class LocalStore {
       const credential = await lstat(join(this.claimPath(entry.name), 'credentials.enc')).catch(missing)
       if (credential && (!credential.isFile() || credential.isSymbolicLink())) throw new Error('Invalid credential file')
       const lastRun = await readJson(join(this.claimPath(entry.name), 'last-run.json')).catch(missing)
-      if (lastRun && (lastRun.version !== 1 || !RUN_STATUS.has(lastRun.status) || !Number.isSafeInteger(lastRun.count) || lastRun.count < 0 || !Number.isFinite(Date.parse(lastRun.finishedAt)))) throw new Error('Invalid run record')
+      if (lastRun && !validRun(lastRun)) throw new Error('Invalid run record')
       result.push({ id: config.id, benefitId: config.benefitId, label: config.label, connected: Boolean(credential), ...(lastRun ? { lastRun: { status: lastRun.status, count: lastRun.count, finishedAt: lastRun.finishedAt } } : {}) })
     }
     return result.sort((a, b) => a.id.localeCompare(b.id))
@@ -119,7 +134,35 @@ export class LocalStore {
       if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('Invalid claim directory')
       const config = await readJson(join(path, 'config.json'))
       if (config.version !== 1 || config.id !== id) throw new Error('Invalid configuration')
-      await writeJson(join(path, 'last-run.json'), { version: 1, status: result.status, count: result.count, finishedAt: new Date().toISOString() })
+      const record = { version: 1, status: result.status, count: result.count, finishedAt: new Date().toISOString() }
+      const historyPath = join(path, 'run-history.json')
+      let history = await readJson(historyPath).catch(missing)
+      if (history === null) {
+        const last = await readJson(join(path, 'last-run.json')).catch(missing)
+        if (last && !validRun(last)) throw new Error('Invalid run record')
+        history = { version: 1, runs: last ? [last] : [] }
+      }
+      if (history.version !== 1 || !Array.isArray(history.runs) || history.runs.length > 50 || !history.runs.every(validRun)) throw new Error('Invalid run history')
+      await writeJson(historyPath, { version: 1, runs: [record, ...history.runs].slice(0, 50) })
+      await writeJson(join(path, 'last-run.json'), record)
+    })
+  }
+
+  async getRunHistory(id) {
+    return this.serial(async () => {
+      const path = this.claimPath(id)
+      const info = await lstat(path)
+      if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('Invalid claim directory')
+      const config = await readJson(join(path, 'config.json'))
+      if (config.version !== 1 || config.id !== id) throw new Error('Invalid configuration')
+      const history = await readJson(join(path, 'run-history.json')).catch(missing)
+      if (history === null) {
+        const last = await readJson(join(path, 'last-run.json')).catch(missing)
+        if (last && !validRun(last)) throw new Error('Invalid run record')
+        return last ? [{ status: last.status, count: last.count, finishedAt: last.finishedAt }] : []
+      }
+      if (history.version !== 1 || !Array.isArray(history.runs) || history.runs.length > 50 || !history.runs.every(validRun)) throw new Error('Invalid run history')
+      return history.runs.map(({ status, count, finishedAt }) => ({ status, count, finishedAt }))
     })
   }
 

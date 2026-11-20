@@ -15,7 +15,7 @@ test('browser and Host expose the same panel methods and argument names', async 
     inject(_names, fn) { fn(scope); const done = Promise.resolve(); done.dispose = async () => {}; return done },
   }
   const dispose = await client.apply(ctx)
-  const projection = entries => Array.from(entries, entry => ({ method: entry.method, parameters: Array.from(entry.parameters, p => p.name), cancellation: Boolean(entry.cancellation) })).sort((a, b) => a.method.localeCompare(b.method))
+  const projection = entries => Array.from(entries, entry => ({ method: entry.method, parameters: Array.from(entry.parameters, p => ({ name: p.name, optional: Boolean(p.acceptsUndefined) })), cancellation: Boolean(entry.cancellation) })).sort((a, b) => a.method.localeCompare(b.method))
   assert.deepEqual(projection(descriptors), projection(TYPERT.invocations))
   await dispose()
 })

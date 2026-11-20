@@ -1,16 +1,26 @@
 # 领取器开发（实验接口）
 
-当前适配器接口仍可能调整；仅 Epic 领取器已经接入，真实站点流程尚未验证。新增领取器需要提交实现和测试，由维护者审查后注册到 `src/adapters/index.js`；插件不会从福利目录下载或执行远程代码。
+当前适配器接口仍可能调整；仅 Epic 领取器已经接入，插件的真实自动领取流程尚未完成。新增领取器需要提交实现和测试，由维护者审查后注册到 `src/adapters/index.js`；插件不会从福利目录下载或执行远程代码。适配器与 DSH Host 同进程运行，注册校验不是安全沙箱，维护者必须审查代码及其网络行为。
+
+注册形式为 `{ name, authentication, settings, adapter }`。`authentication` 默认为 `session`；只有确实无需登录的福利才显式使用 `none`。注册时会校验标识、名称及必需方法，无需登录的福利不读取、创建或保存凭据文件。
+
+`settings` 可选，声明如地区、渠道等非敏感的预设选项：每项包含 `key`、`label`、`choices: [{ value, label }]` 和可选 `defaultValue`。用户可在福利页面选择和修改；值只允许声明过的选项，并保存在本地配置文件中，更新与执行串行化。对已有配置增加或移除选项，或移除其当前选中值时，平台会要求用户重新确认设置，不静默切换。它不是凭据输入：不得把密码、账号、Cookie、Token 或其他敏感信息放在选项中；需要敏感输入时由适配器的本地认证流程处理。`connect`、`authenticate`、`discover`、`verify` 和 `submit` 的上下文会收到 `settings`。影响领取周期或对象的设置应体现在机会 `id` 或 `namespace` 中，避免不同设置的结果错误去重。
 
 ## 接口
 
-`connect()` 在本地引导用户登录，返回仅供本地加密存储的会话信息，其中 `accountId` 是稳定账号标识，用于阻止重新连接时意外覆盖另一个账号。不得把密码、Cookie、Token 或原始错误返回给模型、写日志或提交到仓库。用户需手动完成验证码与二次验证，不实现验证码绕过。
+`connect()` 在本地引导用户登录，返回仅供本地加密存储的会话信息，其中 `accountId` 是稳定账号标识，用于阻止重新连接时意外覆盖另一个账号。`authentication: 'none'` 的适配器不需要此方法。不得把密码、Cookie、Token 或原始错误返回给模型、写日志或提交到仓库。用户需手动完成验证码与二次验证，不实现验证码绕过。
 
-`authenticate(credential)` 检查会话并返回包含稳定 `subject` 的运行上下文，可提供 `snapshot()` 和 `close()`。运行上下文不得向工具输出或模型返回内部状态。认证失效时以 `AUTH_REQUIRED` 失败，不得静默切换账号。
+`authenticate(credential)` 检查会话并返回包含稳定 `subject` 的运行上下文，可提供 `snapshot()` 和 `close()`。会话模式的 `subject` 必须与凭据包中的 `accountId` 一致，刷新的快照必须保留同一 `accountId`；无需登录时收到的 `credential` 是 `null`，`subject` 应是稳定的公开主体标识。运行上下文不得向工具输出或模型返回内部状态。认证失效时以 `AUTH_REQUIRED` 失败，不得静默切换账号。
 
-`discover({ account, signal })` 返回当前机会数组，每项需包括稳定 `id`、`namespace`、`expiresAt`，及执行必需的公开信息。时间和地区应由平台响应和用户账号决定，不得硬编码用户所属地区。
+`discover({ account, signal })` 返回最多 100 个当前机会，每项需包括非空字符串 `id`、`namespace`、有效的 `expiresAt`，及执行必需的公开信息。新适配器应提供稳定的非空字符串 `cycleKey` 表示平台的实际领取周期；去重键包括福利、主体、`namespace`、`id` 和 `cycleKey`，不因同一机会的截止时间调整而改变。对旧适配器，缺少 `cycleKey` 时仍使用原来的截止时间作为周期标识以兼容已有记录。时间和地区应由平台响应和用户账号决定，不得硬编码用户所属地区。
+
+已发布的适配器不能随意新增或更改 `cycleKey` 的计算方式：这会改变去重键，旧记录不会自动迁移。需要变更时应同时设计数据迁移并验证重复领取风险。
 
 `verify(credential, opportunity, { account, signal })` 返回 `owned`、`not_owned` 或 `unknown`。无法核实必须返回 `unknown`，不能假定领取成功或失败。`submit(...)` 执行领取，不应仅凭发现接口价格为零就提交有费用的订单。机会去重、提交意图和执行锁由运行层处理。
+
+运行 `npm test` 会检查所有内置适配器的注册结构；贡献者仍需为适配器提供自己的合成数据行为测试，覆盖登录、身份不匹配、取消、重复触发、失败恢复、未知结果以及必要的安全边界。注册检查只能发现缺失方法，不能证明网络操作安全或真实站点兼容。
+
+可参考 [`examples/adapter-example.js`](../examples/adapter-example.js) 和 [`tests/adapter-example.test.js`](../tests/adapter-example.test.js)。测试辅助函数 [`withAdapterHarness`](../tests/support/adapter-harness.js) 在系统临时目录创建独立存储和随机测试密钥，运行真实的配置、执行、去重与历史记录代码，不访问用户的系统凭据库。示例没有网络请求，也不是可领取的真实福利。
 
 ## PR 至少包含
 

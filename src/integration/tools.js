@@ -10,7 +10,7 @@ export function apply(ctx) {
     async execute() { return ctx.eggs.listBenefits() },
   }))
   ctx.tools.register(defineTool({
-    name: 'egg_list', description: 'List local claim configurations and whether a local credential exists; this does not verify its validity.', parameters: {}, output,
+    name: 'egg_list', description: 'List local benefit configurations and connection status; stored credentials are not checked for validity.', parameters: {}, output,
     async execute() { try { return await ctx.eggs.list() } catch { return { status: 'failed', code: 'LIST_FAILED' } } },
   }))
   ctx.tools.register(defineTool({
@@ -19,7 +19,7 @@ export function apply(ctx) {
     async execute(args) { try { return await ctx.eggs.create(args.benefit_id) } catch { return { status: 'failed', code: 'CREATE_FAILED' } } },
   }))
   ctx.tools.register(defineTool({
-    name: 'egg_run', description: 'Run the configured Epic free-games claim and return a safe status.',
+    name: 'egg_run', description: 'Run the configured benefit claim and return a safe status.',
     parameters: { claim_config_id: { type: 'string', required: true, description: 'Local claim configuration ID' } }, output,
     async execute(args, exec) { return ctx.eggs.run(args.claim_config_id, exec.signal) },
   }))

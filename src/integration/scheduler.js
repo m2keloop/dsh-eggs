@@ -16,5 +16,5 @@ export async function createEggSchedule(ctx, id, everySeconds, signal) {
       target: { kind: 'new_once', create: { agentPreset: 'eggs-runner' } },
     }, undefined, signal)
     return { status: 'created', schedule_id: task.id }
-  })
+  }, signal)
 }
